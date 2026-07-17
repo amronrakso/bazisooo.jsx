@@ -1,0 +1,95 @@
+// BAZ-GATEWAY: Deploy as a free Cloudflare Worker
+// Strips HTTPS / TLS strangulation and routes back as raw HTTP
+
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    
+    // 1. If accessed directly without a target, show the 80s matrix interface
+    const targetUrl = url.searchParams.get('u');
+    if (!targetUrl) {
+      return new Response(getMatrixHTML(url.host), {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
+      });
+    }
+
+    // 2. Fetch the modern HTTPS target securely from the cloud
+    let cleanTarget = targetUrl;
+    if (!cleanTarget.startsWith('http')) {
+      cleanTarget = 'https://' + cleanTarget;
+    }
+
+    try {
+      const response = await fetch(cleanTarget, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+
+      // 3. Strip Strict-Transport-Security (HSTS) and security policies
+      const newHeaders = new Headers(response.headers);
+      newHeaders.delete('strict-transport-security');
+      newHeaders.delete('content-security-policy');
+      newHeaders.delete('x-frame-options');
+
+      let body = await response.text();
+
+      // 4. Link Rewriter: Force all internal HTTPS links back through this HTTP proxy
+      const proxyBase = `http://${url.host}/?u=`;
+      body = body.replace(/href=["'](https?:\/\/[^"']+)["']/gi, (match, p1) => {
+        return `href="${proxyBase}${encodeURIComponent(p1)}"`;
+      });
+
+      return new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders
+      });
+
+    } catch (err) {
+      return new Response(`[BAZ ERROR] Cloud fetch failed: ${err.message}`, { status: 502 });
+    }
+  }
+};
+
+function getMatrixHTML(host) {
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>BAZ-CLOUD GATEWAY</title>
+    <style>
+      body { background: #000; color: #0f0; font-family: "Courier New", monospace; padding: 20px; font-size: 14px; }
+      pre { color: #05ff05; text-shadow: 0 0 3px #0f0; }
+      input { background: #050505; color: #0f0; border: 1px solid #0f0; padding: 8px; width: 350px; font-family: inherit; }
+      button { background: #000; color: #0f0; border: 1px solid #0f0; cursor: pointer; padding: 8px 15px; font-family: inherit; font-weight: bold; }
+      button:hover { background: #0f0; color: #000; }
+      .container { border: 1px solid #0f0; padding: 20px; display: inline-block; background: #020202; }
+    </style>
+  </head>
+  <body>
+    <pre>
+====================================================================
+[BAZ-SYSTEMS // CLOUD TRANSITION MATRIX]
+====================================================================
+  _    _ _           _                     ____    _     _____ 
+ | |  | (_)         | |                   |  _ \\  / \\   |__  / 
+ | |  | |_ _ __   __| | ___  _ __ ___  ___| |_) |/ _ \\    / /  
+ | |/\\| | | '_ \\ / _\` |/ _ \\| '_ \` _ \\/ __|  _ </ ___ \\  / /_  
+  \\  /\\  / | | | | (_| | (_) | | | | | \\__ \\ |_) /_/   \\_\\/____| 
+   \\/  \\/|_|_| |_|\\__,_|\\___/|_| |_| |_|___/____/               
+                                                                
+====================================================================
+STATUS: CLOUD MODULE ACTIVE // Unstrangled HTTP Tunnel Ready
+====================================================================
+    </pre>
+    <div class="container">
+      <form method="GET" action="http://${host}/">
+        <label>DE-STRANGLE URL: </label>
+        <input type="text" name="u" placeholder="wikipedia.org" required autofocus>
+        <button type="submit">GO</button>
+      </form>
+    </div>
+  </body>
+  </html>`;
+}
